@@ -1,0 +1,224 @@
+---
+title: "Healthcare Workers in Indonesia 2023"
+output:
+  flexdashboard::flex_dashboard:
+    theme:
+      version: 4
+      bootswatch: minty
+      navbar-bg: '#60C0D0'
+    vertical_layout: scroll
+    orientation: columns
+runtime: shiny
+resource_files:
+- LBB3_Interactive Plot.Rproj
+- .Rhistory
+---
+
+```{r setup, include=FALSE}
+# Load Libraries
+library(flexdashboard)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(plotly)
+library(glue)
+library(tidyr)
+library(DT)
+library(shiny)
+library(leaflet)
+library(sf)
+```
+
+```{r}
+# Data Preparation
+healthworkers <- read.csv("data_input/Jumlah Tenaga Kesehatan Menurut Provinsi, 2023.csv")
+```
+```{r}
+# Data Preparation
+healthworkers_clean <- healthworkers %>%
+  rename(
+    Province = Provinsi,
+    Nurses = `Tenaga.Kesehatan...Perawat`,
+    Midwives = `Tenaga.Kesehatan...Bidan`,
+    Pharmaceutical_Personnel = `Tenaga.Kesehatan...Tenaga.Kefarmasian`,
+    Public_Health_Workers = `Tenaga.Kesehatan...Tenaga.Kesehatan.Masyarakat`,
+    Environmental_Health_Workers = `Tenaga.Kesehatan...Tenaga.Kesehatan.Lingkungan`,
+    Nutritionists = `Tenaga.Kesehatan...Tenaga.Gizi`,
+    Medical_Laboratory_Technologists = `Tenaga.Kesehatan...Ahli.Teknologi.Laboratorium.Medik`,
+    Medical_Personnel = `Jumlah.Tenaga.Medis`,
+    Clinical_Psychology_Personnel = `Jumlah.Tenaga.Kesehatan.Psikologi.Klinis`,
+    Physical_Therapy_Personnel = `Jumlah.Tenaga.Keterapian.Fisik`,
+    Medical_Technical_Personnel = `Jumlah.Tenaga.Keteknisan.Medis`,
+    Biomedical_Engineering_Personnel = `Jumlah.Tenaga.Teknik.Biomedika`,
+    Traditional_Health_Practitioners = `Jumlah.Tenaga.Kesehatan.Tradisional`
+  ) %>%
+  mutate_at(vars(-Province), ~ifelse(is.na(.), 0, .)) %>%
+  mutate_at(vars(-Province), as.integer) %>%
+  mutate(Province = as.factor(Province)) %>%
+  rename_with(~ gsub("_", " ", .x)) %>%
+  arrange(Province)
+```
+
+Overview
+=====================================
+
+#### Bar Chart: Distribution of Healthcare Workers by Province
+
+```{r}
+# Data Preparation
+fillPage(
+  fillCol(
+    renderPlotly({
+      # Data Preparation
+      total_healthworkers <- healthworkers_clean %>%
+        mutate(Total = rowSums(select(., -Province))) %>%
+        arrange(desc(Total)) %>%
+        mutate(label = glue("Province: {Province}\nTotal: {Total}"))
+
+      # Static Visual Creation
+      plot1 <- ggplot(data = total_healthworkers, mapping = aes(x = reorder(Province, -Total), 
+                                                                y = Total, 
+                                                                fill = Total, 
+                                                                text = label)) +
+        geom_col(width = 0.7) +  # Adjusted bar width
+        scale_fill_gradient(low = "#CDDC29", high = "#00B9AD") +
+        labs(title = "Total Healthcare Workers by Province", x = "Province", y = "Number of Workers") +
+        theme_minimal() +
+        theme(
+          axis.text.x = element_text(angle = 90, hjust = 1),  
+          plot.margin = margin(t = 10, r = 10, b = 10, l = 10),  
+          axis.title.x = element_text(margin = margin(t = 10))
+        )
+
+      # Turning Static Visuals into Interactive
+      ggplotly(plot1, tooltip = "text")
+    }),
+    height = "100vh",
+    width = "100%"
+  )
+)
+```
+
+Composition
+=====================================
+
+### Stacked Bar Chart: Composition of Healthcare Workers by Type
+
+```{r}
+# Data Preparation
+composition_data <- healthworkers_clean %>%
+  pivot_longer(cols = -Province, names_to = "Worker_Type", values_to = "Count") %>%
+  mutate(label = glue("Province: {Province}\nWorker Type: {Worker_Type}\nCount: {Count}"))
+
+# Function to generate a gradient palette
+generate_palette <- function(low, high, n) {
+  colors <- colorRampPalette(c(low, high))(n)
+  return(colors)
+}
+
+# Generate a gradient color palette for the worker types
+worker_types <- unique(composition_data$Worker_Type)
+colors <- generate_palette(low = "#CDDC29", high = "#00B9AD", n = length(worker_types))
+names(colors) <- worker_types
+
+# Static Visual Creation
+plot2 <- ggplot(data = composition_data, mapping = aes(x = reorder(Province, -Count), 
+                                                       y = Count, 
+                                                       fill = Worker_Type, 
+                                                       text = label)) +
+  geom_col() +
+  scale_fill_manual(values = colors) +
+  labs(title = "Healthcare Worker Composition by Province", x = "Province", y = "Number of Workers", fill = "Worker Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Turning Static Visuals into Interactive
+ggplotly(plot2, tooltip = "text")
+```
+
+### Pie Chart: Proportion of Each Type of Healthcare Worker
+
+```{r}
+# Data Preparation
+pie_data <- composition_data %>%
+  group_by(Worker_Type) %>%
+  summarize(Total = sum(Count)) %>%
+  mutate(label = glue("Worker Type: {Worker_Type}\nPercentage: {round(Total / sum(Total) * 100, 2)}%"))
+
+# Creating the Pie Chart directly with plotly
+plot3 <- plot_ly(
+  data = pie_data, 
+  labels = ~Worker_Type, 
+  values = ~Total, 
+  text = ~label,
+  textinfo = 'none',
+  hoverinfo = 'text',
+  type = 'pie'
+) %>%
+  layout(
+    title = 'Proportion of Each Type of Healthcare Worker',
+    showlegend = TRUE,
+    margin = list(t = 50, b = 50, l = 50, r = 50),
+    autosize = TRUE
+  )
+
+plot3
+```
+
+Detailed Analysis
+=====================================
+
+### Scatter Plot: Relationship Between Two Types of Healthcare Workers
+
+```{r}
+selectInput("worker_type1", "Select First Worker Type:", choices = colnames(healthworkers_clean)[-1])
+selectInput("worker_type2", "Select Second Worker Type:", choices = colnames(healthworkers_clean)[-1])
+```
+
+
+```{r}
+fillPage(
+  fillCol(
+    renderPlotly({
+      # Data Preparation
+      worker_type1 <- input$worker_type1
+      worker_type2 <- input$worker_type2
+
+      scatter_data <- healthworkers_clean %>%
+        select(Province, all_of(worker_type1), all_of(worker_type2)) %>%
+        rename(Worker1 = all_of(worker_type1), Worker2 = all_of(worker_type2)) %>%
+        mutate(label = glue("Province: {Province}\n{worker_type1}: {Worker1}\n{worker_type2}: {Worker2}"))
+
+      # Static Visual Creation
+      plot4 <- ggplot(data = scatter_data, mapping = aes(x = Worker1, y = Worker2, color = Worker1 + Worker2, text = label)) +
+        geom_point(size = 4) +
+        scale_color_gradient(low = "#CDDC29", high = "#00B9AD") +
+        labs(title = glue("Scatter Plot: {worker_type1} vs. {worker_type2}"), 
+             x = worker_type1, y = worker_type2, color = "Total") +
+        theme_minimal()
+
+      # Turning Static Visuals into Interactive
+      ggplotly(plot4, tooltip = "text")
+    }),
+    height = "100vh",
+    width = "100%"
+  )
+)
+```
+
+Interactive Table
+=====================================
+
+### Detailed Information by Province
+
+```{r}
+datatable_data <- healthworkers_clean %>%
+  select(Province, Nurses, Midwives, `Pharmaceutical Personnel`, `Public Health Workers`, 
+         `Environmental Health Workers`, Nutritionists, `Medical Laboratory Technologists`, 
+         `Medical Personnel`, `Clinical Psychology Personnel`, `Physical Therapy Personnel`, 
+         `Medical Technical Personnel`, `Biomedical Engineering Personnel`, `Traditional Health Practitioners`)
+
+datatable <- DT::datatable(datatable_data, options = list(pageLength = 10))
+
+datatable
+```
